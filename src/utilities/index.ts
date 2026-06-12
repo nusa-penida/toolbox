@@ -16,6 +16,17 @@ registerUtility({
 })
 
 registerUtility({
+  id: 'route-optimizer',
+  name: 'Shortest Route',
+  description: 'Reorder a list of stops into the shortest route and open it in your maps app.',
+  icon: '🧭',
+  availableWithoutAccount: true,
+  component: lazy(() =>
+    import('./route-optimizer/RouteOptimizer').then((m) => ({ default: m.RouteOptimizer }))
+  ),
+})
+
+registerUtility({
   id: 'qr-code',
   name: 'QR Code Generator',
   description: 'Create styled QR codes for URLs, WiFi, contacts, email and more.',
