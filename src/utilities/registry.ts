@@ -1,9 +1,10 @@
-import type { ComponentType } from 'react'
+import type { ComponentType, LazyExoticComponent } from 'react'
 
 /**
  * A utility is a self-contained tool page. To add a new one:
  *   1. Create a folder under src/utilities/<your-utility>/ with a component.
- *   2. Register it in src/utilities/index.ts.
+ *   2. Register it in src/utilities/index.ts (lazy-imported so each tool
+ *      ships as its own chunk and loads on first visit).
  * Routing, navigation and config persistence are handled automatically.
  */
 export interface Utility {
@@ -13,7 +14,7 @@ export interface Utility {
   description: string
   /** Emoji or short string shown in the sidebar. */
   icon: string
-  component: ComponentType
+  component: ComponentType | LazyExoticComponent<ComponentType>
 }
 
 const utilities: Utility[] = []

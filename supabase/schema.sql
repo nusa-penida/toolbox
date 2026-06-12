@@ -49,3 +49,30 @@ create policy "Users can update own configs"
 create policy "Users can delete own configs"
   on public.utility_configs for delete
   using (auth.uid() = user_id);
+
+-- Saved QR code creations: a named snapshot of the content fields and design
+-- so users can reload and re-export codes later from any device.
+create table if not exists public.qr_codes (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  name text not null,
+  content_type text not null,
+  data jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists qr_codes_user_id_idx on public.qr_codes (user_id, created_at desc);
+
+alter table public.qr_codes enable row level security;
+
+create policy "Users can read own qr codes"
+  on public.qr_codes for select
+  using (auth.uid() = user_id);
+
+create policy "Users can insert own qr codes"
+  on public.qr_codes for insert
+  with check (auth.uid() = user_id);
+
+create policy "Users can delete own qr codes"
+  on public.qr_codes for delete
+  using (auth.uid() = user_id);

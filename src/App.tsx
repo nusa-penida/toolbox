@@ -1,4 +1,5 @@
 // HashRouter so deep links survive refresh on GitHub Pages (no rewrite rules there).
+import { Suspense } from 'react'
 import { HashRouter, Navigate, Route, Routes, useParams } from 'react-router-dom'
 import { AuthProvider } from './auth/AuthContext'
 import { useAuth } from './auth/auth-context'
@@ -13,7 +14,11 @@ function UtilityPage() {
   const utility = utilityId ? getUtility(utilityId) : undefined
   if (!utility) return <Navigate to="/" replace />
   const Component = utility.component
-  return <Component />
+  return (
+    <Suspense fallback={<p className="animate-pulse text-slate-400">Loading tool…</p>}>
+      <Component />
+    </Suspense>
+  )
 }
 
 function AppRoutes() {
