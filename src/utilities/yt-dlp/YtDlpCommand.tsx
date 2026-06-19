@@ -75,6 +75,23 @@ const AUDIO_FORMATS: { id: string; label: string }[] = [
   { id: 'best', label: 'Best (no convert)' },
 ]
 
+// A small, recognizable subset of the 1800+ sites yt-dlp can extract from.
+// The full, authoritative list lives on the yt-dlp supported-sites page.
+const POPULAR_SITES: string[] = [
+  'YouTube',
+  'Vimeo',
+  'TikTok',
+  'Instagram',
+  'Facebook',
+  'X / Twitter',
+  'Twitch',
+  'Reddit',
+  'SoundCloud',
+  'Bandcamp',
+  'Dailymotion',
+  'BBC iPlayer',
+]
+
 const BROWSERS: { id: string; label: string }[] = [
   { id: '', label: 'None' },
   { id: 'chrome', label: 'Chrome' },
@@ -247,7 +264,7 @@ export function YtDlpCommand() {
   return (
     <div className="animate-fade-up">
       <div className="flex items-baseline justify-between">
-        <h1 className="text-3xl font-bold tracking-tight">yt-dlp Command Builder</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Video Downloader</h1>
         <SaveStatus saving={saving} />
       </div>
       <p className="mt-2 text-slate-400">
@@ -473,6 +490,33 @@ export function YtDlpCommand() {
               </code>{' '}
               installed. Only download content you have the right to.
             </p>
+          </div>
+
+          <div className="glass mt-4 rounded-2xl p-5">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-slate-500">
+              Supported sites
+            </p>
+            <p className="mt-3 text-xs leading-relaxed text-slate-400">
+              Works with YouTube and over 1,800 other sites — a few popular ones:
+            </p>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {POPULAR_SITES.map((site) => (
+                <span
+                  key={site}
+                  className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-300"
+                >
+                  {site}
+                </span>
+              ))}
+            </div>
+            <a
+              href="https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md"
+              target="_blank"
+              rel="noreferrer"
+              className="mt-3 inline-block text-xs text-indigo-300 transition-colors hover:text-indigo-200"
+            >
+              See the full list of supported sites →
+            </a>
           </div>
         </div>
       </div>

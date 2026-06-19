@@ -53,9 +53,19 @@ export function AuthPage() {
     <div className="ambient flex min-h-screen items-center justify-center bg-surface px-4">
       <div className="relative z-10 w-full max-w-sm animate-fade-up">
         <div className="mb-8 text-center">
-          <span className="mx-auto grid size-16 place-items-center rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-500 to-cyan-400 text-3xl shadow-lg shadow-indigo-500/30">
-            🧰
-          </span>
+          <svg className="mx-auto size-16" viewBox="0 0 24 24" fill="none" stroke="url(#toolbox-grad)" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+            <defs>
+              <linearGradient id="toolbox-grad" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stopColor="#6366f1" />
+                <stop offset="50%" stopColor="#8b5cf6" />
+                <stop offset="100%" stopColor="#22d3ee" />
+              </linearGradient>
+            </defs>
+            <path d="M3 9h18v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9Z" />
+            <path d="M8 9V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v3" />
+            <path d="M3 13h6m6 0h6" />
+            <path d="M9 11v4m6-4v4" />
+          </svg>
           <h1 className="mt-4 text-3xl font-bold tracking-tight text-white">
             <span className="text-gradient">Toolbox</span>
           </h1>
