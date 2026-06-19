@@ -58,3 +58,25 @@ registerUtility({
     import('./soccer-predictor/SoccerPredictor').then((m) => ({ default: m.SoccerPredictor }))
   ),
 })
+
+registerUtility({
+  id: 'stock-tracker',
+  name: 'Stock Tracker',
+  description: 'Track a watchlist of prices, charts and fund holdings via Alpha Vantage, FMP (free) or Morningstar.',
+  icon: '📈',
+  availableWithoutAccount: false,
+  component: lazy(() =>
+    import('./stock-tracker/StockTracker').then((m) => ({ default: m.StockTracker }))
+  ),
+})
+
+registerUtility({
+  id: 'movies',
+  name: 'Movies',
+  description: 'Browse popular, in-theatres and top-rated movies via TMDB, filter or search, then stream — with saved favourites and watch history.',
+  icon: '🎬',
+  availableWithoutAccount: false,
+  component: lazy(() =>
+    import('./movies/Movies').then((m) => ({ default: m.Movies }))
+  ),
+})
