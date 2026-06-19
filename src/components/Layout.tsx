@@ -26,8 +26,13 @@ export function Layout() {
       >
         <div className="flex items-center justify-between pr-3 lg:pr-0">
           <NavLink to="/" onClick={closeNav} className="group flex items-center gap-3 px-5 py-5">
-            <span className="grid size-10 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 via-violet-500 to-cyan-400 text-xl shadow-lg shadow-indigo-500/30 transition-transform duration-200 group-hover:scale-105">
-              🧰
+            <span className="grid size-10 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 via-violet-500 to-cyan-400 shadow-lg shadow-indigo-500/30 transition-transform duration-200 group-hover:scale-105">
+              <svg className="size-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 9h18v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9Z" />
+                <path d="M8 9V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v3" />
+                <path d="M3 13h6m6 0h6" />
+                <path d="M9 11v4m6-4v4" />
+              </svg>
             </span>
             <span className="text-lg font-bold tracking-tight">Toolbox</span>
           </NavLink>
@@ -98,8 +103,13 @@ export function Layout() {
             </svg>
           </button>
           <Link to="/" className="flex items-center gap-2.5">
-            <span className="grid size-8 place-items-center rounded-lg bg-gradient-to-br from-indigo-500 via-violet-500 to-cyan-400 text-lg shadow-lg shadow-indigo-500/30">
-              🧰
+            <span className="grid size-8 place-items-center rounded-lg bg-gradient-to-br from-indigo-500 via-violet-500 to-cyan-400 shadow-lg shadow-indigo-500/30">
+              <svg className="size-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 9h18v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9Z" />
+                <path d="M8 9V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v3" />
+                <path d="M3 13h6m6 0h6" />
+                <path d="M9 11v4m6-4v4" />
+              </svg>
             </span>
             <span className="font-bold tracking-tight">Toolbox</span>
           </Link>

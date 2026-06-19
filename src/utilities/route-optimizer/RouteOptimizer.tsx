@@ -454,7 +454,7 @@ export function RouteOptimizer() {
   const working = phase.kind === 'working'
 
   return (
-    <div className="max-w-2xl animate-fade-up">
+    <div className="animate-fade-up">
       <div className="flex items-baseline justify-between">
         <h1 className="text-3xl font-bold tracking-tight">Shortest Route</h1>
         <SaveStatus saving={saving} />

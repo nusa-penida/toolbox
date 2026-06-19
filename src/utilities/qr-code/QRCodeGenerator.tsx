@@ -408,7 +408,7 @@ export function QRCodeGenerator() {
   const c = config.contentType
 
   return (
-    <div className="max-w-5xl animate-fade-up">
+    <div className="animate-fade-up">
       <div className="flex items-baseline justify-between">
         <h1 className="text-3xl font-bold tracking-tight">QR Code Generator</h1>
         <SaveStatus saving={saving} />

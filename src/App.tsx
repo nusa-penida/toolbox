@@ -5,7 +5,9 @@ import { AuthProvider } from './auth/AuthContext'
 import { useAuth } from './auth/auth-context'
 import { AuthPage } from './auth/AuthPage'
 import { Layout } from './components/Layout'
+import { SetupScreen } from './components/SetupScreen'
 import { Home } from './pages/Home'
+import { isSupabaseConfigured } from './lib/supabase'
 import { getUtility } from './utilities/registry'
 import './utilities' // registers all utilities
 
@@ -47,6 +49,8 @@ function AppRoutes() {
 }
 
 export default function App() {
+  if (!isSupabaseConfigured) return <SetupScreen />
+
   return (
     <AuthProvider>
       <HashRouter>

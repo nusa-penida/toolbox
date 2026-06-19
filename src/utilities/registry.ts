@@ -1,4 +1,4 @@
-import type { ComponentType, LazyExoticComponent } from 'react'
+import type { ComponentType, LazyExoticComponent, ReactNode } from 'react'
 
 /**
  * A utility is a self-contained tool page. To add a new one:
@@ -12,8 +12,12 @@ export interface Utility {
   id: string
   name: string
   description: string
-  /** Emoji or short string shown in the sidebar. */
-  icon: string
+  /**
+   * SVG icon shown in the sidebar and on cards. Use an inline SVG element
+   * (see src/utilities/icons.tsx), NOT an emoji — icons inherit the
+   * surrounding text color via `stroke="currentColor"`.
+   */
+  icon: ReactNode
   /**
    * When true, the utility can be used without logging in — saving
    * (configs, saved items) still requires an account. Defaults to false:
