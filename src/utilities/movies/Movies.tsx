@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   ArrowLeft,
@@ -24,9 +24,11 @@ import { useUtilityConfig } from '../../hooks/useUtilityConfig'
  *     / top-rated lists, genre categories, search and per-title details.
  *     TMDB allows browser CORS, so we call it directly with the user's own
  *     v3 API key (saved to their RLS-protected account config, never bundled).
- *   • VidAPI (vidapi.ru) for playback — given a TMDB id it returns an embed
+ *   • VidFast (vidfast.pro) for playback — given a TMDB id it returns an embed
  *     player (movies by id, TV by id + season + episode), dropped into an
- *     <iframe>. No key required.
+ *     <iframe>. No key required. These free providers monetize with redirect/
+ *     popup ads and refuse to play inside a sandboxed iframe, so the embed runs
+ *     unsandboxed — a browser ad blocker (e.g. uBlock Origin) is the mitigation.
  *
  * Favourites and watch history are part of the saved config, so they sync to
  * the user's account and persist across devices. Without an account the tool
@@ -35,6 +37,12 @@ import { useUtilityConfig } from '../../hooks/useUtilityConfig'
 
 const TMDB_BASE = 'https://api.themoviedb.org/3'
 const IMG_BASE = 'https://image.tmdb.org/t/p'
+
+// VidFast playback host. It mirrors itself across several domains; if one is
+// reset by an ISP/DNS block ("connection unexpectedly closed"), swap this for
+// another: vidfast.pro, vidfast.in, vidfast.io, vidfast.me, vidfast.net,
+// vidfast.pm, vidfast.xyz.
+const VIDFAST_DOMAIN = 'vidfast.net'
 
 type MediaType = 'movie' | 'tv'
 type Feed = 'popular' | 'now_playing' | 'on_the_air' | 'top_rated'
@@ -97,6 +105,8 @@ interface WatchEntry extends Title {
   season?: number
   episode?: number
   progress?: number
+  // Absolute playback position in seconds, used to resume via `startAt`.
+  positionSec?: number
 }
 
 interface MoviesConfig extends Record<string, unknown> {
@@ -334,7 +344,6 @@ function DetailCard({
   initialEpisode,
   onToggleFav,
   onPlay,
-  onProgress,
   onClose,
 }: {
   title: Title
@@ -343,8 +352,7 @@ function DetailCard({
   initialSeason: number
   initialEpisode: number
   onToggleFav: () => void
-  onPlay: (season: number, episode: number, progress: number) => void
-  onProgress: (season: number, episode: number, progress: number) => void
+  onPlay: (season: number, episode: number) => void
   onClose: () => void
 }) {
   const isTv = title.mediaType === 'tv'
@@ -367,19 +375,6 @@ function DetailCard({
   }, [title.mediaType, title.id, apiKey])
 
   const seasons = (details?.seasons ?? []).filter((s) => s.episode_count > 0)
-
-  // How far through the title the chosen episode sits: cumulative episodes up
-  // to (season, episode) over the show's total. Movies are simply 1 (watched).
-  function computeProgress(s: number, e: number): number {
-    if (!isTv) return 1
-    const total = details?.number_of_episodes ?? 0
-    if (!total) return 0
-    const before = (details?.seasons ?? [])
-      .filter((x) => x.season_number > 0 && x.season_number < s)
-      .reduce((sum, x) => sum + x.episode_count, 0)
-    return Math.min(1, Math.max(0, (before + e) / total))
-  }
-
   const rating = details?.vote_average ?? title.vote_average
   const runtimeMin = isTv ? details?.episode_run_time?.[0] : details?.runtime
   const meta = [
@@ -418,7 +413,7 @@ function DetailCard({
         <button
           onClick={onClose}
           aria-label="Close"
-          className="absolute right-4 top-4 z-20 flex size-9 items-center justify-center rounded-full bg-black/50 text-white/80 backdrop-blur transition-colors hover:bg-black/70 hover:text-white"
+          className="absolute left-4 top-4 z-20 flex size-9 items-center justify-center rounded-full bg-black/50 text-white/80 backdrop-blur transition-colors hover:bg-black/70 hover:text-white"
         >
           <X className="size-5" />
         </button>
@@ -470,19 +465,15 @@ function DetailCard({
                 onSeason={(s) => {
                   setSeason(s)
                   setEpisode(1)
-                  onProgress(s, 1, computeProgress(s, 1))
                 }}
-                onEpisode={(e) => {
-                  setEpisode(e)
-                  onProgress(season, e, computeProgress(season, e))
-                }}
+                onEpisode={setEpisode}
               />
             </div>
           )}
 
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <button
-              onClick={() => onPlay(season, episode, computeProgress(season, episode))}
+              onClick={() => onPlay(season, episode)}
               className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-6 py-3 text-base font-semibold text-white shadow-lg shadow-indigo-500/25 transition-all duration-200 hover:brightness-110"
             >
               <Play className="size-4 fill-current" /> Play{isTv ? ` S${season} · E${episode}` : ''}
@@ -506,24 +497,102 @@ function DetailCard({
   )
 }
 
+// Shape of the player's `MEDIA_DATA` payload, parsed defensively. The player may
+// post its whole store (keyed by TMDB id) or just the playing title's entry;
+// movies carry `progress` directly, episodes nest it under `show_progress`.
+interface MediaProgressNode {
+  watched?: number
+  duration?: number
+}
+interface MediaProgressEntry {
+  progress?: MediaProgressNode
+  show_progress?: Record<string, { progress?: MediaProgressNode }>
+}
+type MediaProgressStore = MediaProgressEntry & Record<string, MediaProgressEntry>
+
 // Full-screen player overlay — the season/episode are chosen on the card.
+// Resumes at `resumeSec` and reports playback progress back via `onProgress`.
 function Player({
   title,
   season,
   episode,
+  resumeSec,
+  onProgress,
   onClose,
 }: {
   title: Title
   season: number
   episode: number
+  resumeSec: number
+  onProgress: (fraction: number, seconds: number) => void
   onClose: () => void
 }) {
   const isTv = title.mediaType === 'tv'
   useOverlayChrome(onClose)
 
-  const src = isTv
-    ? `https://vidapi.ru/embed/tv/${title.id}/${season}/${episode}`
-    : `https://vidapi.ru/embed/movie/${title.id}`
+  // Keep the latest callback in a ref so the message listener can stay
+  // subscribed once for the player's lifetime without going stale.
+  const onProgressRef = useRef(onProgress)
+  useEffect(() => {
+    onProgressRef.current = onProgress
+  })
+
+  // The embed posts playback progress to the parent as it plays. We track the
+  // latest position each tick but only persist it once, on close, to keep saves
+  // (and DB writes) sparse. Parsed defensively since the exact shape isn't
+  // contractual and varies by provider — we accept either form:
+  //   • PLAYER_EVENT: a per-tick event carrying `currentTime` + `duration`.
+  //     Some providers post this as a JSON *string*, so we parse strings first.
+  //   • MEDIA_DATA: a progress store keyed by TMDB id (movies carry `progress`
+  //     directly; episodes nest it under `show_progress` by `s{n}e{n}`).
+  const latest = useRef<{ fraction: number; seconds: number } | null>(null)
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      let d = e.data as Record<string, unknown> | string | null
+      if (typeof d === 'string') {
+        try {
+          d = JSON.parse(d) as Record<string, unknown>
+        } catch {
+          return
+        }
+      }
+      if (!d || typeof d !== 'object') return
+      const type = d.type ?? d.event
+      let seconds: number
+      let duration: number
+      if (type === 'MEDIA_DATA') {
+        const raw = (d.data ?? {}) as MediaProgressStore
+        const entry = raw.progress || raw.show_progress ? raw : raw[String(title.id)]
+        const node = isTv
+          ? entry?.show_progress?.[`s${season}e${episode}`]?.progress
+          : entry?.progress
+        seconds = Number(node?.watched)
+        duration = Number(node?.duration)
+      } else if (type === 'PLAYER_EVENT') {
+        const inner = (d.data as Record<string, unknown>) ?? d
+        seconds = Number(inner.currentTime ?? inner.player_progress ?? inner.progress)
+        duration = Number(inner.duration ?? inner.player_duration)
+      } else return
+      if (!isFinite(seconds) || !isFinite(duration) || duration <= 0) return
+      latest.current = { fraction: Math.min(1, Math.max(0, seconds / duration)), seconds }
+    }
+    window.addEventListener('message', onMessage)
+    return () => {
+      window.removeEventListener('message', onMessage)
+      // Persist wherever the viewer got to when the player closes.
+      if (latest.current) onProgressRef.current(latest.current.fraction, latest.current.seconds)
+    }
+  }, [title.id, isTv, season, episode])
+
+  const base = isTv
+    ? `https://${VIDFAST_DOMAIN}/tv/${title.id}/${season}/${episode}`
+    : `https://${VIDFAST_DOMAIN}/movie/${title.id}`
+  // `theme` matches our violet accent; `autoPlay` starts playback immediately
+  // (the click on Play is the user gesture that permits it); `hideServer` drops
+  // the server-selector button; `startAt` (seconds) resumes where we left off.
+  const params = new URLSearchParams({ theme: '8b5cf6', autoPlay: 'true', hideServer: 'true' })
+  if (resumeSec > 0) params.set('startAt', String(Math.floor(resumeSec)))
+  const src = `${base}?${params.toString()}`
 
   return createPortal(
     <div
@@ -538,7 +607,7 @@ function Player({
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-white">{title.title}</p>
             <p className="text-xs text-slate-500">
-              {isTv ? `Season ${season} · Episode ${episode}` : year(title.date)} · playing via VidAPI
+              {isTv ? `Season ${season} · Episode ${episode}` : year(title.date)}
             </p>
           </div>
           <button
@@ -548,20 +617,20 @@ function Player({
             <X className="size-4" /> Close
           </button>
         </div>
-        <div className="aspect-video w-full bg-black">
+        {/* Cap the player to the viewport height so its controls aren't clipped
+            on shorter screens; the modal's header takes the rest. The iframe
+            fills this box (the player letterboxes if the ratio differs). */}
+        <div className="aspect-video max-h-[calc(100dvh-6rem)] w-full bg-black">
           <iframe
             key={src}
             src={src}
             title={title.title}
             className="size-full"
             allowFullScreen
+            allow="autoplay; fullscreen; encrypted-media"
             referrerPolicy="origin"
           />
         </div>
-        <p className="px-4 py-2.5 text-[11px] text-slate-500">
-          Source streams are provided by VidAPI, a third party. If a title won't play, it may not be
-          available yet.
-        </p>
       </div>
     </div>,
     document.body
@@ -589,13 +658,20 @@ export function Movies() {
   const [error, setError] = useState<string | null>(null)
   // `selected` drives the detail popup; `playing` the video overlay.
   const [selected, setSelected] = useState<Title | null>(null)
-  const [playing, setPlaying] = useState<{ title: Title; season: number; episode: number } | null>(
-    null
-  )
+  const [playing, setPlaying] = useState<{
+    title: Title
+    season: number
+    episode: number
+    resumeSec: number
+  } | null>(null)
 
   const favSet = new Set(config.favourites.map(tkey))
-  // Watch progress (0–1) by title, to draw the fill bar on any poster.
-  const progressMap = new Map(config.watched.map((w) => [tkey(w), w.progress]))
+  // Watch progress (0–1) by title, to draw the fill bar on any poster. Entries
+  // saved before progress was tracked have none — a watched movie is fully
+  // seen (1); an old TV entry's depth is unknown, so it stays bar-less.
+  const progressMap = new Map(
+    config.watched.map((w) => [tkey(w), w.progress ?? (w.mediaType === 'movie' ? 1 : undefined)])
+  )
   const isFeed = view !== 'favourites' && view !== 'watched' && view !== 'settings'
 
   // Load the genre list for the current media type — powers the category filter.
@@ -706,10 +782,16 @@ export function Movies() {
 
   // Pressing Play on the card counts as a watch: record (or bump) it in
   // history, most-recent first, de-duplicated by media+id, then show the
-  // player. For movies the season/episode are left undefined.
-  function play(t: Title, season: number, episode: number, progress: number) {
+  // player. If reopening the same movie/episode, resume from the saved
+  // position; switching to a different episode starts it fresh.
+  function play(t: Title, season: number, episode: number) {
+    const existing = config.watched.find((w) => tkey(w) === tkey(t))
+    const sameSpot =
+      !!existing && (t.mediaType !== 'tv' || (existing.season === season && existing.episode === episode))
+    const resumeSec = sameSpot ? existing?.positionSec ?? 0 : 0
+    const progress = sameSpot ? existing?.progress ?? 0 : 0
     setSelected(null)
-    setPlaying({ title: t, season, episode })
+    setPlaying({ title: t, season, episode, resumeSec })
     setConfig((prev) => ({
       ...prev,
       watched: [
@@ -719,22 +801,23 @@ export function Movies() {
           season: t.mediaType === 'tv' ? season : undefined,
           episode: t.mediaType === 'tv' ? episode : undefined,
           progress,
+          positionSec: resumeSec,
         },
         ...prev.watched.filter((w) => tkey(w) !== tkey(t)),
       ].slice(0, 100),
     }))
   }
 
-  // Save TV watch progress as the season/episode is changed, so reopening the
-  // title resumes there. Only updates a title that's already been played —
-  // merely browsing episodes shouldn't add it to history.
-  function recordProgress(t: Title, season: number, episode: number, progress: number) {
+  // The player reports back how far the viewer got; store the fraction (for the
+  // fill bar) and the absolute position (to resume next time). Identified by
+  // title — the season/episode being played hasn't changed mid-session.
+  function recordPlayback(t: Title, fraction: number, seconds: number) {
     setConfig((prev) => {
       if (!prev.watched.some((w) => tkey(w) === tkey(t))) return prev
       return {
         ...prev,
         watched: prev.watched.map((w) =>
-          tkey(w) === tkey(t) ? { ...w, season, episode, progress } : w
+          tkey(w) === tkey(t) ? { ...w, progress: fraction, positionSec: seconds } : w
         ),
       }
     })
@@ -828,7 +911,7 @@ export function Movies() {
                 themoviedb.org
               </a>{' '}
               (use the “API Key”, not the read token). It's saved to your account — only you can read
-              it — and used straight from your browser. Playback is via VidAPI and needs no key.
+              it — and used straight from your browser. Playback is via VidFast and needs no key.
             </p>
             <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
               {hasKey ? (
@@ -1059,8 +1142,7 @@ export function Movies() {
           initialSeason={selectedEntry?.season ?? 1}
           initialEpisode={selectedEntry?.episode ?? 1}
           onToggleFav={() => toggleFav(selected)}
-          onPlay={(s, e, p) => play(selected, s, e, p)}
-          onProgress={(s, e, p) => recordProgress(selected, s, e, p)}
+          onPlay={(s, e) => play(selected, s, e)}
           onClose={() => setSelected(null)}
         />
       )}
@@ -1070,6 +1152,8 @@ export function Movies() {
           title={playing.title}
           season={playing.season}
           episode={playing.episode}
+          resumeSec={playing.resumeSec}
+          onProgress={(fraction, seconds) => recordPlayback(playing.title, fraction, seconds)}
           onClose={() => setPlaying(null)}
         />
       )}
