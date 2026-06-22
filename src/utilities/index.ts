@@ -9,6 +9,7 @@ import {
   soccerIcon,
   stockIcon,
   moviesIcon,
+  mealPlannerIcon,
 } from './icons'
 
 // Register every utility here. Order determines sidebar order.
@@ -88,6 +89,17 @@ registerUtility({
   availableWithoutAccount: false,
   component: lazy(() =>
     import('./stock-tracker/StockTracker').then((m) => ({ default: m.StockTracker }))
+  ),
+})
+
+registerUtility({
+  id: 'meal-planner',
+  name: 'Meal Planner',
+  description: 'Plan a lunch and dinner for each day of the week from your own list of meals.',
+  icon: mealPlannerIcon,
+  availableWithoutAccount: false,
+  component: lazy(() =>
+    import('./meal-planner/MealPlanner').then((m) => ({ default: m.MealPlanner }))
   ),
 })
 
