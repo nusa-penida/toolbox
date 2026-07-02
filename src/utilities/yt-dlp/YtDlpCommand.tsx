@@ -1,16 +1,24 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { SaveStatus } from '../../components/SaveStatus'
 import { useUtilityConfig } from '../../hooks/useUtilityConfig'
 import { useT } from '../../i18n/LanguageContext'
+import { functionsBase } from '../../lib/supabase'
 
 /**
- * yt-dlp command generator.
+ * Video downloader — two paths from one set of options:
  *
- * yt-dlp is a Python CLI that downloads media by acting as a non-browser HTTP
- * client — something a browser-only app cannot do, since cross-origin reads of
- * sites like YouTube are blocked by CORS. So this tool does NOT download
- * anything itself: it builds the exact `yt-dlp` command from the chosen options
- * for the user to copy and run locally. Pure string-building, no network calls.
+ *  1. "Download to this device": POSTs the options to the self-hosted backend
+ *     (server/functions/video-download.mjs), which runs yt-dlp on the server,
+ *     streams progress back as NDJSON, and hands the finished file to the
+ *     browser as a normal download. The user does nothing but click.
+ *  2. "Copy the command": builds the exact `yt-dlp` command string to run
+ *     locally — the offline / no-backend fallback, and useful for playlists
+ *     (the server path always delivers a single file).
+ *
+ * A browser can't run yt-dlp itself (cross-origin reads of YouTube etc. are
+ * blocked by CORS, and it needs a real process + ffmpeg), which is why the
+ * download path goes through the backend. The command builder is pure string
+ * work; only the download button touches the network.
  *
  * Option preferences persist via useUtilityConfig; the URL stays ephemeral.
  */
@@ -106,9 +114,9 @@ const STR = {
   en: {
     loading: 'Loading your settings…',
     title: 'Video Downloader',
-    introBefore: 'Build a ready-to-run ',
+    introBefore: 'Pick your options, then hit download — the server runs ',
     introAfter:
-      ' command from your options, then copy it and run it in your terminal. Nothing is downloaded here — the actual fetching happens locally on your machine.',
+      ' for you and sends the file straight to your device. Prefer to run it yourself? Copy the ready-to-run command instead.',
     urlLabel: 'Video / playlist URL',
     urlPlaceholder: 'https://www.youtube.com/watch?v=…',
     whatToDownload: 'What to download',
@@ -139,7 +147,22 @@ const STR = {
     outputTemplateLabel: 'Output filename template',
     speedLimitLabel: 'Speed limit',
     restrictFilenames: 'Restrict filenames to ASCII (no spaces / special chars)',
-    command: 'Command',
+    downloadHeading: 'Download',
+    downloadButton: 'Download to this device',
+    downloadStarting: 'Starting…',
+    downloadPreparing: 'Preparing download…',
+    downloadProcessing: 'Processing on server…',
+    downloadSaving: 'Sending file to your device…',
+    downloadDone: 'Done — check your downloads.',
+    downloadNeedUrl: 'Enter a URL first.',
+    downloadStageMerging: 'Merging video + audio…',
+    downloadStageAudio: 'Extracting audio…',
+    downloadStageEmbedding: 'Embedding extras…',
+    playlistDownloadNote:
+      'Playlist mode is set to “whole playlist”, but downloading here fetches only the single video. Copy the command below to grab the full playlist.',
+    cookiesDownloadNote:
+      'Browser cookies can’t be read by the server. If this video needs a login, copy the command and run it locally instead.',
+    command: 'Or copy the command',
     copy: 'Copy',
     copied: 'Copied!',
     enterUrlHint: 'Enter a URL above to drop it into the command.',
@@ -158,9 +181,9 @@ const STR = {
   nl: {
     loading: 'Je instellingen laden…',
     title: 'Video-downloader',
-    introBefore: 'Stel een kant-en-klaar ',
+    introBefore: 'Kies je opties en klik op downloaden — de server draait ',
     introAfter:
-      '-commando samen op basis van je opties, kopieer het en voer het uit in je terminal. Hier wordt niets gedownload — het echte ophalen gebeurt lokaal op je eigen machine.',
+      ' voor jou en stuurt het bestand meteen naar je apparaat. Liever zelf uitvoeren? Kopieer dan het kant-en-klare commando.',
     urlLabel: 'Video- / afspeellijst-URL',
     urlPlaceholder: 'https://www.youtube.com/watch?v=…',
     whatToDownload: 'Wat downloaden',
@@ -191,7 +214,22 @@ const STR = {
     outputTemplateLabel: 'Sjabloon voor bestandsnaam',
     speedLimitLabel: 'Snelheidslimiet',
     restrictFilenames: 'Bestandsnamen beperken tot ASCII (geen spaties / speciale tekens)',
-    command: 'Commando',
+    downloadHeading: 'Downloaden',
+    downloadButton: 'Download naar dit apparaat',
+    downloadStarting: 'Starten…',
+    downloadPreparing: 'Download voorbereiden…',
+    downloadProcessing: 'Verwerken op server…',
+    downloadSaving: 'Bestand naar je apparaat sturen…',
+    downloadDone: 'Klaar — kijk bij je downloads.',
+    downloadNeedUrl: 'Voer eerst een URL in.',
+    downloadStageMerging: 'Video + audio samenvoegen…',
+    downloadStageAudio: 'Audio extraheren…',
+    downloadStageEmbedding: 'Extra’s insluiten…',
+    playlistDownloadNote:
+      'Afspeellijstmodus staat op “volledige afspeellijst”, maar hier downloaden haalt enkel de losse video op. Kopieer het commando hieronder voor de volledige afspeellijst.',
+    cookiesDownloadNote:
+      'De server kan geen browsercookies lezen. Heeft deze video een login nodig? Kopieer dan het commando en voer het lokaal uit.',
+    command: 'Of kopieer het commando',
     copy: 'Kopiëren',
     copied: 'Gekopieerd!',
     enterUrlHint: 'Voer hierboven een URL in om die in het commando te plaatsen.',
@@ -207,6 +245,29 @@ const STR = {
       'Werkt met YouTube en meer dan 1.800 andere sites — enkele populaire:',
     fullListLink: 'Bekijk de volledige lijst met ondersteunde sites →',
   },
+}
+
+// Fetch the finished file in slices below the Cloudflare Tunnel's 100 MB
+// per-response cap, then reassemble in the browser (see fetchAndSave).
+const TUNNEL_CHUNK = 90 * 1024 * 1024
+
+const MIME_BY_EXT: Record<string, string> = {
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  webm: 'video/webm',
+  mkv: 'video/x-matroska',
+  mov: 'video/quicktime',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  opus: 'audio/opus',
+  flac: 'audio/flac',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+}
+
+function mimeFor(filename: string): string {
+  const ext = filename.slice(filename.lastIndexOf('.') + 1).toLowerCase()
+  return MIME_BY_EXT[ext] || 'application/octet-stream'
 }
 
 /**
@@ -231,8 +292,14 @@ function videoFormat(quality: string, forceMp4: boolean): string {
     : `bestvideo${h}+bestaudio/best${h}`
 }
 
+// yt-dlp's default YouTube client reports some DRM-locked videos as "not
+// available"; trying several clients recovers a downloadable fallback. The arg
+// is namespaced to youtube, so it's a harmless no-op for other sites.
+const YOUTUBE_CLIENTS = 'youtube:player_client=default,web,web_safari,android,ios'
+
 function buildCommand(o: Options, url: string): string {
   const args: string[] = ['yt-dlp']
+  args.push(`--extractor-args ${shellQuote(YOUTUBE_CLIENTS)}`)
 
   if (o.mode === 'audio') {
     args.push('-x') // --extract-audio
@@ -347,11 +414,27 @@ function Pills<T extends string>({
   )
 }
 
+type DownloadPhase =
+  | 'idle'
+  | 'starting'
+  | 'downloading'
+  | 'processing'
+  | 'saving'
+  | 'done'
+  | 'error'
+
+type Progress = { percent: number; speed: string | null; eta: string | null }
+
 export function YtDlpCommand() {
   const t = useT(STR)
   const { config, setConfig, loading, saving } = useUtilityConfig('yt-dlp', DEFAULTS)
   const [url, setUrl] = useState('')
   const [copied, setCopied] = useState(false)
+  const [phase, setPhase] = useState<DownloadPhase>('idle')
+  const [progress, setProgress] = useState<Progress | null>(null)
+  const [stage, setStage] = useState<string | null>(null)
+  const [dlError, setDlError] = useState<string | null>(null)
+  const doneTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   if (loading) {
     return <p className="animate-pulse text-slate-400">{t.loading}</p>
@@ -359,6 +442,8 @@ export function YtDlpCommand() {
 
   const o = config
   const command = buildCommand(o, url)
+  const busy =
+    phase === 'starting' || phase === 'downloading' || phase === 'processing' || phase === 'saving'
 
   async function copy() {
     try {
@@ -369,6 +454,124 @@ export function YtDlpCommand() {
       setCopied(false)
     }
   }
+
+  function stageLabel(s: string | null): string {
+    if (s === 'Merger' || s === 'VideoConvertor') return t.downloadStageMerging
+    if (s === 'ExtractAudio') return t.downloadStageAudio
+    return t.downloadStageEmbedding
+  }
+
+  /**
+   * Pull the finished file from the server and save it. The Cloudflare Tunnel
+   * caps a single response at 100 MB, so we fetch the file in sub-100 MB slices
+   * (?offset=&length=) and reassemble them into one Blob in the browser, then
+   * trigger a normal download. Fetching each slice as a Blob keeps the browser
+   * free to back large files on disk rather than holding it all in RAM. Finally
+   * we release the server-side temp file.
+   */
+  async function fetchAndSave(jobId: string, filename: string, size: number) {
+    const base = `${functionsBase}/video-download?job=${encodeURIComponent(jobId)}`
+    const parts: Blob[] = []
+    let fetched = 0
+    for (let offset = 0; offset < Math.max(size, 1); offset += TUNNEL_CHUNK) {
+      const length = Math.min(TUNNEL_CHUNK, size - offset)
+      const res = await fetch(`${base}&offset=${offset}&length=${length}`)
+      if (!res.ok) throw new Error(`Transfer failed (${res.status})`)
+      parts.push(await res.blob())
+      fetched += length
+      if (size > 0) setProgress({ percent: (fetched / size) * 100, speed: null, eta: null })
+      if (size === 0) break
+    }
+
+    const blob = new Blob(parts, { type: mimeFor(filename) })
+    const objUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objUrl
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(objUrl), 60_000)
+    fetch(`${base}&release=1`).catch(() => {}) // best-effort cleanup
+  }
+
+  async function download() {
+    const trimmed = url.trim()
+    if (!trimmed) {
+      setDlError(t.downloadNeedUrl)
+      return
+    }
+    if (doneTimer.current) clearTimeout(doneTimer.current)
+    setDlError(null)
+    setProgress(null)
+    setStage(null)
+    setPhase('starting')
+
+    try {
+      const res = await fetch(`${functionsBase}/video-download`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...o, url: trimmed }),
+      })
+      if (!res.ok || !res.body) {
+        const err = await res.json().catch(() => null)
+        throw new Error(err?.error || `Server error (${res.status})`)
+      }
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      // Parse the NDJSON progress stream line by line.
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        let nl: number
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim()
+          buf = buf.slice(nl + 1)
+          if (!line) continue
+          const msg = JSON.parse(line)
+          if (msg.type === 'progress') {
+            setPhase('downloading')
+            setProgress({ percent: msg.percent, speed: msg.speed, eta: msg.eta })
+          } else if (msg.type === 'status') {
+            setPhase('processing')
+            setStage(msg.stage)
+          } else if (msg.type === 'error') {
+            throw new Error(msg.message)
+          } else if (msg.type === 'done') {
+            setPhase('saving')
+            setProgress(null)
+            await fetchAndSave(msg.jobId, msg.filename, msg.size)
+            setPhase('done')
+            doneTimer.current = setTimeout(() => setPhase('idle'), 5000)
+          }
+        }
+      }
+      // Stream ended without a terminal message (e.g. server crash / cutoff).
+      setPhase((p) => (p === 'done' ? p : 'idle'))
+    } catch (e) {
+      setDlError(e instanceof Error ? e.message : 'Download failed')
+      setPhase('error')
+    }
+  }
+
+  const determinate = (phase === 'downloading' || phase === 'saving') && progress !== null
+  const busyLabel =
+    phase === 'starting'
+      ? t.downloadStarting
+      : phase === 'downloading'
+        ? progress
+          ? `${Math.round(progress.percent)}%`
+          : t.downloadPreparing
+        : phase === 'processing'
+          ? stageLabel(stage)
+          : phase === 'saving'
+            ? progress
+              ? `${t.downloadSaving} ${Math.round(progress.percent)}%`
+              : t.downloadSaving
+            : t.downloadButton
 
   return (
     <div className="animate-fade-up">
@@ -555,6 +758,56 @@ export function YtDlpCommand() {
 
         <div className="min-w-0 lg:sticky lg:top-8 lg:self-start">
           <div className="glass rounded-2xl p-5">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-slate-500">
+              {t.downloadHeading}
+            </p>
+            <button
+              onClick={download}
+              disabled={busy || !url.trim()}
+              className="mt-4 w-full rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy ? busyLabel : t.downloadButton}
+            </button>
+
+            {busy && (
+              <div className="mt-4">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className={`h-full rounded-full bg-gradient-to-r from-indigo-400 to-violet-400 transition-all duration-300 ${
+                      determinate ? '' : 'animate-pulse'
+                    }`}
+                    style={{ width: determinate && progress ? `${progress.percent}%` : '100%' }}
+                  />
+                </div>
+                {phase === 'downloading' && progress && (progress.speed || progress.eta) && (
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    {progress.speed}
+                    {progress.speed && progress.eta ? ' · ETA ' : ''}
+                    {progress.eta}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {phase === 'done' && (
+              <p className="mt-3 text-xs text-emerald-300">{t.downloadDone}</p>
+            )}
+            {phase === 'error' && dlError && (
+              <p className="mt-3 break-words text-xs text-rose-300">{dlError}</p>
+            )}
+            {!busy && o.playlist === 'full' && (
+              <p className="mt-3 text-[11px] leading-relaxed text-amber-300/80">
+                {t.playlistDownloadNote}
+              </p>
+            )}
+            {!busy && o.cookiesBrowser && (
+              <p className="mt-3 text-[11px] leading-relaxed text-amber-300/80">
+                {t.cookiesDownloadNote}
+              </p>
+            )}
+          </div>
+
+          <div className="glass mt-4 rounded-2xl p-5">
             <div className="flex items-center justify-between">
               <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-slate-500">
                 {t.command}
@@ -635,16 +888,3 @@ export function YtDlpCommand() {
     </div>
   )
 }
-
-
-/*
-On wiring it to a proxy backend later
-
-Server-side: the backend already knows how to run yt-dlp; you'd send it the same options object (not the assembled string — never pass a shell string to a server). Better yet, translate options into a yt-dlp argument array server-side and spawn the process with execFile-style args (no shell), so there's zero shell-injection surface. The current shellQuote logic is only for the human-copy case.
-UI: add a "Download here" button next to "Copy" that POSTs the options and streams progress back. The builder page stays useful as the manual/offline path either way.
-Two things worth flagging for that future backend, since they're the real reasons a proxy is needed and also its main risks:
-
-It's an open relay if unauthenticated. A backend that fetches arbitrary user-supplied URLs is an SSRF vector and an abuse magnet (people will point it at anything). You'd want auth, allow-listed domains or rate limits, and URL validation.
-Resource cost — yt-dlp spawns ffmpeg, uses real CPU/disk/bandwidth, and downloads can be large. That's a different operational profile than your current static SPA.
-So: the client tool stands on its own today, and the refactor to add a backend later is small and already anticipated. Happy to sketch the backend (and the args-array translation) when you want to go there.
-*/

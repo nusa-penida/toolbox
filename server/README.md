@@ -2,17 +2,26 @@
 
 A zero-dependency Node server that ports the five Supabase edge functions
 (`cors-proxy`, `soccer`, `alphavantage`, `fmp`, `morningstar`) so they run on
-this machine and are reachable through the existing Cloudflare Tunnel. Routes
-mirror Supabase exactly:
+this machine and are reachable through the existing Cloudflare Tunnel, plus one
+function that only makes sense on a real box: `video-download`, which runs
+`yt-dlp` server-side for the Video Downloader tool. Routes mirror Supabase:
 
 ```
-GET /functions/v1/cors-proxy
-GET /functions/v1/soccer
-GET /functions/v1/alphavantage
-GET /functions/v1/fmp
-GET /functions/v1/morningstar
-GET /health        # liveness probe
+GET  /functions/v1/cors-proxy
+GET  /functions/v1/soccer
+GET  /functions/v1/alphavantage
+GET  /functions/v1/fmp
+GET  /functions/v1/morningstar
+POST /functions/v1/video-download    # run yt-dlp, stream NDJSON progress
+GET  /functions/v1/video-download?job=ID&offset=&length=   # fetch a file slice
+GET  /functions/v1/video-download?job=ID&release=1         # free the temp file
+GET  /health         # liveness probe
 ```
+
+Most handlers are GET-only and return a `{ status, contentType, body }` object
+for the server to write. A handler can instead take over the response stream
+itself (read a POST body, write chunks) — `video-download` does this to stream
+progress and then the file. See [Adding a new function](#adding-a-new-function).
 
 Auth is unchanged: each user still brings their own upstream API key /
 credentials, passed per request via headers and never persisted. The
@@ -41,6 +50,27 @@ Pages, and `server/` is checked out and run on the fileserver box. So a push to
 - Node ≥ 18 (uses global `fetch`, `Request`/`Response`, `atob`/`btoa`). This
   machine has Node 26.
 - No `npm install` — there are no dependencies.
+- For `video-download` only: **`yt-dlp` and `ffmpeg`** must be installed and on
+  the service's `PATH` (systemd uses the default system `PATH`, so put yt-dlp in
+  `/usr/local/bin`). yt-dlp does the fetching; ffmpeg does the merging / audio
+  extraction / embedding. Install e.g.:
+
+  ```sh
+  sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+    -o /usr/local/bin/yt-dlp && sudo chmod a+rx /usr/local/bin/yt-dlp
+  sudo pacman -S ffmpeg      # or apt install ffmpeg
+  ```
+
+  Override the binary location with `YT_DLP_PATH` if it lives elsewhere.
+  Downloads write to the OS temp dir (`PrivateTmp=true` gives the service its
+  own writable `/tmp`), and each finished file is deleted once the browser has
+  fetched all its slices and releases it (or after 30 min if it never does).
+
+  **Cloudflare Tunnel caps a single response at 100 MB**, and videos routinely
+  exceed that, so the finished file is served in sub-100 MB slices
+  (`?offset=&length=`) that the browser reassembles into one download. The POST
+  progress stream also emits periodic `{"type":"ping"}` heartbeats so a long,
+  quiet merge doesn't trip the tunnel's idle-response timeout.
 
 ## Run it
 
@@ -57,6 +87,8 @@ Config (all optional, via env or `.env`):
 | `PORT`         | `8787`      | Port to listen on (loopback).                       |
 | `HOST`         | `127.0.0.1` | Bind address. Keep loopback — the tunnel is local.  |
 | `ALLOW_ORIGIN` | `*`         | CORS allow-origin. Set to your site to lock it down.|
+| `YT_DLP_PATH`  | `yt-dlp`    | Path to the yt-dlp binary (`video-download`).        |
+| `VIDEO_MAX_CONCURRENT` | `2` | Max simultaneous downloads before returning 429.     |
 
 ## Point the frontend at it
 
@@ -187,7 +219,13 @@ sitting at the fileserver to develop; you only need to apply the change there.
    `export async function handle({ url, header }) { ... }`. Return one of the
    `_shared.mjs` helpers: `json(body, status)` or `text(body, status)`. Read
    query params from `url.searchParams` and any credential headers via
-   `header('x-...')`. These handlers are GET-only (no request body parsing).
+   `header('x-...')`.
+   - **POST / streaming:** the handler also receives `{ req, res, method, body,
+     cors }`. `body` is the raw request body string (POST only). To stream a
+     response, write to `res` yourself (start with
+     `res.writeHead(200, { ...cors, 'Content-Type': ... })`) and return nothing
+     — the server sees the response is already sent and leaves it alone. See
+     `video-download.mjs` for the NDJSON-progress-then-file pattern.
 2. Register it in [`index.mjs`](index.mjs): import the module and add it to the
    `ROUTES` map. If it reads a new credential header, add that header name to
    `ALLOW_HEADERS` so CORS preflight permits it.
@@ -210,6 +248,15 @@ Morningstar token cache for the pattern.
   check here (would require sending the secret from the frontend).
 - Keep `HOST=127.0.0.1` so the server is reachable only via the tunnel, never
   directly on the LAN or a public port.
+- `video-download` is a different risk profile from the data functions: it
+  spawns a process that fetches an arbitrary user-supplied URL and uses real
+  CPU / disk / bandwidth. Mitigations in place: yt-dlp is spawned with an
+  **argument array, never a shell** (no injection); options are validated
+  against allow-lists; output is confined to a per-job temp dir with
+  `--restrict-filenames`; and `VIDEO_MAX_CONCURRENT` caps parallel jobs. It's
+  still an SSRF/abuse surface if the endpoint is public — this relies on the
+  tunnel + `ALLOW_ORIGIN` like the rest. Add Cloudflare Access on
+  `api.zacsvae.com` if you want a hard gate.
 
 ## Parity with the edge functions
 

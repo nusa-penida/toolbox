@@ -25,6 +25,7 @@ import * as soccer from './functions/soccer.mjs'
 import * as alphavantage from './functions/alphavantage.mjs'
 import * as fmp from './functions/fmp.mjs'
 import * as morningstar from './functions/morningstar.mjs'
+import * as videoDownload from './functions/video-download.mjs'
 
 const PORT = Number(process.env.PORT) || 8787
 const HOST = process.env.HOST || '127.0.0.1' // bind loopback; the tunnel reaches it locally
@@ -37,6 +38,22 @@ const ROUTES = {
   alphavantage,
   fmp,
   morningstar,
+  'video-download': videoDownload,
+}
+
+// POST bodies are small JSON option payloads. Cap the size so a runaway upload
+// can't exhaust memory (the GET-only functions never read a body at all).
+const MAX_BODY_BYTES = 1_000_000
+
+async function readBody(req) {
+  const chunks = []
+  let size = 0
+  for await (const chunk of req) {
+    size += chunk.length
+    if (size > MAX_BODY_BYTES) throw new Error('Request body too large')
+    chunks.push(chunk)
+  }
+  return Buffer.concat(chunks).toString('utf8')
 }
 
 // Superset of every credential/passthrough header the functions read, so a
@@ -83,16 +100,44 @@ const server = createServer(async (req, res) => {
     return Array.isArray(v) ? v[0] : (v ?? null)
   }
 
+  let body = ''
+  if (req.method === 'POST') {
+    try {
+      body = await readBody(req)
+    } catch (e) {
+      res.writeHead(413, { ...corsHeaders(), 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: e instanceof Error ? e.message : 'Body read failed' }))
+      return
+    }
+  }
+
   try {
-    const result = await mod.handle({ url, header })
-    const { status = 200, contentType = 'application/json', body = '', extraHeaders = {} } = result
+    // Handlers either return a `{ status, contentType, body }` result for the
+    // server to write, OR take over `res` themselves (streaming) and return
+    // nothing — video-download streams progress + files that way.
+    const result = await mod.handle({
+      url,
+      header,
+      req,
+      res,
+      method: req.method,
+      body,
+      cors: corsHeaders(),
+    })
+    if (res.writableEnded || res.headersSent) return
+    const { status = 200, contentType = 'application/json', body: out = '', extraHeaders = {} } =
+      result || {}
     res.writeHead(status, { ...corsHeaders(), ...extraHeaders, 'Content-Type': contentType })
-    res.end(body)
+    res.end(out)
   } catch (e) {
     // Handlers catch their own upstream errors; this is the last-resort net.
     const msg = e instanceof Error ? e.message : 'Request failed'
-    res.writeHead(500, { ...corsHeaders(), 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ error: msg }))
+    if (!res.headersSent) {
+      res.writeHead(500, { ...corsHeaders(), 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: msg }))
+    } else if (!res.writableEnded) {
+      res.end()
+    }
   }
 })
 
