@@ -29,8 +29,16 @@ import * as videoDownload from './functions/video-download.mjs'
 
 const PORT = Number(process.env.PORT) || 8787
 const HOST = process.env.HOST || '127.0.0.1' // bind loopback; the tunnel reaches it locally
-// Match the edge functions' permissive default. Set to your site origin to lock down.
-const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || '*'
+// Allowed browser origins. Comma-separated list (e.g. the site's apex + www +
+// its Pages URL), or `*` to allow any. When it's a list, the request's Origin
+// is reflected back if it's on the list — a browser can't send `*` credentials
+// and CORS only allows one origin per response, so reflecting is how you support
+// more than one site. Defaults to `*` to match the old Supabase edge functions.
+const ALLOW_ORIGINS = (process.env.ALLOW_ORIGIN || '*')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+const ALLOW_ANY_ORIGIN = ALLOW_ORIGINS.includes('*')
 
 const ROUTES = {
   'cors-proxy': corsProxy,
@@ -62,27 +70,35 @@ const ALLOW_HEADERS =
   'authorization, x-client-info, apikey, content-type, ' +
   'x-fd-token, x-av-key, x-fmp-key, x-ms-user, x-ms-pass, x-ms-region'
 
-function corsHeaders() {
-  return {
-    'Access-Control-Allow-Origin': ALLOW_ORIGIN,
+function corsHeaders(reqOrigin) {
+  let allow
+  if (ALLOW_ANY_ORIGIN) allow = '*'
+  else if (reqOrigin && ALLOW_ORIGINS.includes(reqOrigin)) allow = reqOrigin
+  else allow = ALLOW_ORIGINS[0] // a non-allowed origin gets a mismatch → browser blocks it
+  const headers = {
+    'Access-Control-Allow-Origin': allow,
     'Access-Control-Allow-Headers': ALLOW_HEADERS,
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   }
+  // When the allowed origin depends on the request, caches must key on Origin.
+  if (!ALLOW_ANY_ORIGIN) headers['Vary'] = 'Origin'
+  return headers
 }
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
+  const cors = corsHeaders(req.headers.origin)
 
   // Preflight — one response for every route.
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, corsHeaders())
+    res.writeHead(204, cors)
     res.end()
     return
   }
 
   // Lightweight liveness probe for monitoring / the tunnel health.
   if (url.pathname === '/health' || url.pathname === '/') {
-    res.writeHead(200, { ...corsHeaders(), 'Content-Type': 'application/json' })
+    res.writeHead(200, { ...cors, 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ ok: true, service: 'toolbox-backend' }))
     return
   }
@@ -90,7 +106,7 @@ const server = createServer(async (req, res) => {
   const match = url.pathname.match(/^\/functions\/v1\/([^/]+)\/?$/)
   const mod = match && ROUTES[match[1]]
   if (!mod) {
-    res.writeHead(404, { ...corsHeaders(), 'Content-Type': 'application/json' })
+    res.writeHead(404, { ...cors, 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: `Unknown function: ${match ? match[1] : url.pathname}` }))
     return
   }
@@ -105,7 +121,7 @@ const server = createServer(async (req, res) => {
     try {
       body = await readBody(req)
     } catch (e) {
-      res.writeHead(413, { ...corsHeaders(), 'Content-Type': 'application/json' })
+      res.writeHead(413, { ...cors, 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: e instanceof Error ? e.message : 'Body read failed' }))
       return
     }
@@ -122,18 +138,18 @@ const server = createServer(async (req, res) => {
       res,
       method: req.method,
       body,
-      cors: corsHeaders(),
+      cors,
     })
     if (res.writableEnded || res.headersSent) return
     const { status = 200, contentType = 'application/json', body: out = '', extraHeaders = {} } =
       result || {}
-    res.writeHead(status, { ...corsHeaders(), ...extraHeaders, 'Content-Type': contentType })
+    res.writeHead(status, { ...cors, ...extraHeaders, 'Content-Type': contentType })
     res.end(out)
   } catch (e) {
     // Handlers catch their own upstream errors; this is the last-resort net.
     const msg = e instanceof Error ? e.message : 'Request failed'
     if (!res.headersSent) {
-      res.writeHead(500, { ...corsHeaders(), 'Content-Type': 'application/json' })
+      res.writeHead(500, { ...cors, 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: msg }))
     } else if (!res.writableEnded) {
       res.end()

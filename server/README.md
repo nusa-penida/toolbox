@@ -86,7 +86,7 @@ Config (all optional, via env or `.env`):
 | -------------- | ----------- | --------------------------------------------------- |
 | `PORT`         | `8787`      | Port to listen on (loopback).                       |
 | `HOST`         | `127.0.0.1` | Bind address. Keep loopback — the tunnel is local.  |
-| `ALLOW_ORIGIN` | `*`         | CORS allow-origin. Set to your site to lock it down.|
+| `ALLOW_ORIGIN` | `*`         | CORS allow-origin(s). Comma-separated list to lock down; the matching origin is reflected. |
 | `YT_DLP_PATH`  | `yt-dlp`    | Path to the yt-dlp binary (`video-download`).        |
 | `VIDEO_MAX_CONCURRENT` | `2` | Max simultaneous downloads before returning 429.     |
 
@@ -243,9 +243,11 @@ Morningstar token cache for the pattern.
   spend *their own* API quota, or use `cors-proxy` against a 5-host whitelist
   (Google/Apple Maps). Low risk, same as the current Supabase setup.
 - To lock the backend to your own site anyway, set `ALLOW_ORIGIN` to your site's
-  origin. Note CORS is browser-enforced only; for a hard gate, add a
-  Cloudflare Access policy on `api.your-domain.com`, or a shared-secret header
-  check here (would require sending the secret from the frontend).
+  origin (comma-separated for more than one — e.g. `https://www.example.com,https://example.com`;
+  the matching one is reflected). If the site has a custom domain, use that
+  domain here, not the Pages URL. Note CORS is browser-enforced only; for a hard
+  gate, add a Cloudflare Access policy on `api.your-domain.com`, or a
+  shared-secret header check here (would require sending the secret from the frontend).
 - Keep `HOST=127.0.0.1` so the server is reachable only via the tunnel, never
   directly on the LAN or a public port.
 - `video-download` is a different risk profile from the data functions: it
