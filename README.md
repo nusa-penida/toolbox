@@ -36,19 +36,21 @@ npx supabase functions deploy morningstar    # Stock Tracker (paid provider)
 #### Self-hosted backend (currently in use)
 
 These functions also run as a self-hosted backend — a zero-dependency Node
-server in [server/](server/) that ports all five, running on the fileserver
-machine and exposed via its Cloudflare Tunnel at
-**`https://api.zacsvae.com/functions/v1`**. The frontend routes to it through the
-`VITE_FUNCTIONS_URL` repo Variable (falls back to the Supabase edge functions
-when unset). Auth and config storage stay on Supabase either way.
+server that ports all five, running on the fileserver machine and exposed via
+its Cloudflare Tunnel at **`https://api.zacsvae.com/functions/v1`**. The frontend
+routes to it through the `VITE_FUNCTIONS_URL` repo Variable (falls back to the
+Supabase edge functions when unset). Auth and config storage stay on Supabase
+either way.
 
-**The frontend and this backend share this one repo.** The Vite app deploys to
-GitHub Pages on push to `main`; `server/` is a git checkout on the fileserver
-box. So if you build a tool on another machine that needs new backend
-functionality: add it under `server/functions/`, register it in
-`server/index.mjs`, `git push`, then apply it on the fileserver box with
-`server/deploy.sh` (pull + restart). Full workflow and how-to-add-a-function are
-in [server/README.md](server/README.md#updating-the-backend-cross-machine-workflow).
+**The backend lives in a separate private repo**,
+[IsaacSauer/toolbox-backend](https://github.com/IsaacSauer/toolbox-backend),
+checked out and run on the fileserver box. This public frontend repo deploys to
+GitHub Pages on push to `main`; the two are decoupled at runtime (the frontend
+only reaches the backend through the `VITE_FUNCTIONS_URL` URL). So if you build a
+tool that needs new backend functionality: add the function in the
+`toolbox-backend` repo, `git push` there, then apply it on the fileserver box
+with its `deploy.sh` (pull + restart). Full workflow and how-to-add-a-function
+are in that repo's README.
 
 The Stock Tracker has three interchangeable data providers, picked per user in
 the utility. The functions need no secrets — each user brings their own key,

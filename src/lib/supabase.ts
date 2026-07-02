@@ -21,7 +21,8 @@ export const supabase = createClient(
  *
  * Defaults to Supabase's edge-function URL so nothing changes when unset. Set
  * `VITE_FUNCTIONS_URL` (e.g. https://api.example.com/functions/v1) to route
- * these calls to the self-hosted Node backend in `server/` instead — auth and
+ * these calls to the self-hosted Node backend (the toolbox-backend repo)
+ * instead — auth and
  * per-request credential headers are unchanged, so it's a drop-in swap. No
  * trailing slash.
  */

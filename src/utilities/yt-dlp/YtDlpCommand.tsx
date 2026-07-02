@@ -8,7 +8,8 @@ import { functionsBase } from '../../lib/supabase'
  * Video downloader — two paths from one set of options:
  *
  *  1. "Download to this device": POSTs the options to the self-hosted backend
- *     (server/functions/video-download.mjs), which runs yt-dlp on the server,
+ *     (video-download function in the toolbox-backend repo), which runs yt-dlp
+ *     on the server,
  *     streams progress back as NDJSON, and hands the finished file to the
  *     browser as a normal download. The user does nothing but click.
  *  2. "Copy the command": builds the exact `yt-dlp` command string to run
