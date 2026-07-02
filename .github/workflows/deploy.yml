@@ -29,6 +29,10 @@ jobs:
           GITHUB_PAGES: 'true'
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          # Routes the utility functions to the self-hosted backend. Not secret
+          # (a public URL), so set it as a repository Variable, not a Secret.
+          # Leave the variable unset to keep using Supabase edge functions.
+          VITE_FUNCTIONS_URL: ${{ vars.VITE_FUNCTIONS_URL }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { SaveStatus } from '../../components/SaveStatus'
 import { useUtilityConfig } from '../../hooks/useUtilityConfig'
 import { useT, useLang } from '../../i18n/LanguageContext'
+import { functionsBase } from '../../lib/supabase'
 
 /**
  * Soccer Predictor. Two modes, both backed by the `soccer` Supabase edge
@@ -152,7 +153,7 @@ const STR = {
   },
 }
 
-const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/soccer`
+const FN_BASE = `${functionsBase}/soccer`
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string
 
 // football-data.org competition codes available on the free tier.

@@ -15,3 +15,16 @@ export const supabase = createClient(
   supabaseUrl ?? 'https://placeholder.supabase.co',
   supabaseAnonKey ?? 'placeholder-anon-key'
 )
+
+/**
+ * Base URL for the backend "functions" (cors-proxy, soccer, stock providers).
+ *
+ * Defaults to Supabase's edge-function URL so nothing changes when unset. Set
+ * `VITE_FUNCTIONS_URL` (e.g. https://api.example.com/functions/v1) to route
+ * these calls to the self-hosted Node backend in `server/` instead — auth and
+ * per-request credential headers are unchanged, so it's a drop-in swap. No
+ * trailing slash.
+ */
+export const functionsBase =
+  (import.meta.env.VITE_FUNCTIONS_URL as string | undefined)?.replace(/\/$/, '') ||
+  `${supabaseUrl ?? ''}/functions/v1`

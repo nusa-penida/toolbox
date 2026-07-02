@@ -1,0 +1,13 @@
+{
+  "name": "toolbox-backend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Self-hosted backend for the Toolbox website — ports the Supabase edge functions to a zero-dependency Node server behind the Cloudflare Tunnel.",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env index.mjs"
+  }
+}

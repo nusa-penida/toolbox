@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { SaveStatus } from '../../components/SaveStatus'
 import { useUtilityConfig } from '../../hooks/useUtilityConfig'
 import { useT } from '../../i18n/LanguageContext'
+import { functionsBase } from '../../lib/supabase'
 
 /**
  * Shortest route generator: paste a list of addresses, the tool geocodes them
@@ -186,9 +187,8 @@ interface ImportedList {
 // down or rate-limit regularly.
 const PROXY_STRATEGIES: ((url: string) => Promise<string>)[] = [
   async (url) => {
-    const base = import.meta.env.VITE_SUPABASE_URL
     const key = import.meta.env.VITE_SUPABASE_ANON_KEY
-    const res = await fetch(`${base}/functions/v1/cors-proxy?url=${encodeURIComponent(url)}`, {
+    const res = await fetch(`${functionsBase}/cors-proxy?url=${encodeURIComponent(url)}`, {
       headers: { Authorization: `Bearer ${key}`, apikey: key },
     })
     if (!res.ok) throw new Error(`Edge proxy returned ${res.status}`)

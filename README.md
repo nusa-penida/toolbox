@@ -33,6 +33,14 @@ npx supabase functions deploy fmp            # Stock Tracker (free provider)
 npx supabase functions deploy morningstar    # Stock Tracker (paid provider)
 ```
 
+#### Self-hosting the functions instead
+
+These five functions can also run on your own machine — a zero-dependency Node
+server in [server/](server/) ports them and is exposed via a Cloudflare Tunnel.
+Set `VITE_FUNCTIONS_URL` (see `.env.example`) to route the frontend there;
+leave it unset to keep using the Supabase edge functions above. Auth and config
+storage stay on Supabase either way. See [server/README.md](server/README.md).
+
 The Stock Tracker has three interchangeable data providers, picked per user in
 the utility. The functions need no secrets — each user brings their own key,
 saved to their account config (RLS-protected) and forwarded to the function per

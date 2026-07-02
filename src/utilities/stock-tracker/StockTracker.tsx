@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { SaveStatus } from '../../components/SaveStatus'
 import { useUtilityConfig } from '../../hooks/useUtilityConfig'
 import { useLang, useT } from '../../i18n/LanguageContext'
+import { functionsBase } from '../../lib/supabase'
 
 const STR = {
   en: {
@@ -145,7 +146,7 @@ const STR = {
  * change are derived from the history series, so no quote entitlement is needed.
  */
 
-const fnUrl = (name: string) => `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/${name}`
+const fnUrl = (name: string) => `${functionsBase}/${name}`
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string
 
 type Provider = 'alphavantage' | 'fmp' | 'morningstar'
