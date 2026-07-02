@@ -33,13 +33,22 @@ npx supabase functions deploy fmp            # Stock Tracker (free provider)
 npx supabase functions deploy morningstar    # Stock Tracker (paid provider)
 ```
 
-#### Self-hosting the functions instead
+#### Self-hosted backend (currently in use)
 
-These five functions can also run on your own machine — a zero-dependency Node
-server in [server/](server/) ports them and is exposed via a Cloudflare Tunnel.
-Set `VITE_FUNCTIONS_URL` (see `.env.example`) to route the frontend there;
-leave it unset to keep using the Supabase edge functions above. Auth and config
-storage stay on Supabase either way. See [server/README.md](server/README.md).
+These functions also run as a self-hosted backend — a zero-dependency Node
+server in [server/](server/) that ports all five, running on the fileserver
+machine and exposed via its Cloudflare Tunnel at
+**`https://api.zacsvae.com/functions/v1`**. The frontend routes to it through the
+`VITE_FUNCTIONS_URL` repo Variable (falls back to the Supabase edge functions
+when unset). Auth and config storage stay on Supabase either way.
+
+**The frontend and this backend share this one repo.** The Vite app deploys to
+GitHub Pages on push to `main`; `server/` is a git checkout on the fileserver
+box. So if you build a tool on another machine that needs new backend
+functionality: add it under `server/functions/`, register it in
+`server/index.mjs`, `git push`, then apply it on the fileserver box with
+`server/deploy.sh` (pull + restart). Full workflow and how-to-add-a-function are
+in [server/README.md](server/README.md#updating-the-backend-cross-machine-workflow).
 
 The Stock Tracker has three interchangeable data providers, picked per user in
 the utility. The functions need no secrets — each user brings their own key,

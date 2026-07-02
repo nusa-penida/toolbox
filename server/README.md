@@ -19,6 +19,23 @@ credentials, passed per request via headers and never persisted. The
 `Authorization` / `apikey` headers the frontend sends (for Supabase's gateway)
 are simply ignored here.
 
+## Live deployment (as configured)
+
+This is deployed and running. Concrete values for the current setup:
+
+| What              | Value                                                          |
+| ----------------- | -------------------------------------------------------------- |
+| Host machine      | the fileserver box (same one running the `filesrv` tunnel)     |
+| Repo checkout     | `/mnt/hdd/REPOS/toolbox` (backend lives in `server/`)          |
+| Service           | `toolbox-backend.service` (systemd), listens on `127.0.0.1:8787` |
+| Public URL        | `https://api.zacsvae.com/functions/v1` (via Cloudflare Tunnel) |
+| Frontend wiring   | GitHub Pages build reads repo Variable `VITE_FUNCTIONS_URL`    |
+
+The frontend and backend share **one repo**: the Vite app deploys to GitHub
+Pages, and `server/` is checked out and run on the fileserver box. So a push to
+`main` both rebuilds the site and is the source the backend pulls from — see
+[Updating the backend](#updating-the-backend-cross-machine-workflow) below.
+
 ## Requirements
 
 - Node ≥ 18 (uses global `fetch`, `Request`/`Response`, `atob`/`btoa`). This
@@ -132,6 +149,54 @@ curl -s https://api.your-domain.com/health
 
 Then set `VITE_FUNCTIONS_URL=https://api.your-domain.com/functions/v1` in the
 frontend `.env`, rebuild, and the utilities call this machine.
+
+## Updating the backend (cross-machine workflow)
+
+The backend runs from a git checkout on the fileserver box, so deploying a
+change is **push from anywhere → pull + restart here**. You do NOT need to be
+sitting at the fileserver to develop; you only need to apply the change there.
+
+**If you build a new tool on another machine that needs new backend behaviour:**
+
+1. On your dev machine — add/modify the function under `server/functions/`,
+   register it (see below), commit, and `git push origin main`.
+2. On the fileserver box — apply it:
+   ```sh
+   /mnt/hdd/REPOS/toolbox/server/deploy.sh
+   ```
+   That does `git pull --ff-only`, `sudo systemctl restart toolbox-backend`, and
+   waits for `/health`. (Equivalent by hand: `cd /mnt/hdd/REPOS/toolbox &&
+   git pull && sudo systemctl restart toolbox-backend`.)
+3. The new frontend tool calls `${VITE_FUNCTIONS_URL}/<your-function>` — which
+   already points at `https://api.zacsvae.com/functions/v1`, so no frontend
+   config change is needed for a new endpoint on the existing backend.
+
+> **Fully hands-off restarts (optional):** so `deploy.sh` never prompts for a
+> sudo password, allow just that one restart without a password — run
+> `sudo visudo -f /etc/sudoers.d/toolbox-backend` and add:
+> `isaac ALL=(root) NOPASSWD: /usr/bin/systemctl restart toolbox-backend.service`
+
+> **Remote-trigger (optional):** to redeploy without SSHing in, add a tiny
+> authenticated `POST /deploy` route that runs `deploy.sh`, or (simpler/safer) a
+> cron/systemd-timer on the box that runs `deploy.sh` every few minutes so
+> pushes roll out on their own.
+
+### Adding a new function
+
+1. Create `server/functions/my-func.mjs` exporting
+   `export async function handle({ url, header }) { ... }`. Return one of the
+   `_shared.mjs` helpers: `json(body, status)` or `text(body, status)`. Read
+   query params from `url.searchParams` and any credential headers via
+   `header('x-...')`. These handlers are GET-only (no request body parsing).
+2. Register it in [`index.mjs`](index.mjs): import the module and add it to the
+   `ROUTES` map. If it reads a new credential header, add that header name to
+   `ALLOW_HEADERS` so CORS preflight permits it.
+3. Deploy with the workflow above. It's then live at
+   `https://api.zacsvae.com/functions/v1/my-func`.
+
+Because this is a long-running process (not per-request edge invocations), you
+can also keep in-memory state across requests (caches, rate-limiters) — see the
+Morningstar token cache for the pattern.
 
 ## Security notes
 
