@@ -1,21 +1,25 @@
 name: Deploy to GitHub Pages
 
+# Publishes the built site by force-pushing it to the `gh-pages` branch, which
+# is this repo's Pages source (legacy branch build). We moved off the
+# actions/deploy-pages pipeline: its finalize step failed persistently for this
+# site ("Deployment failed, try again later") while branch-based publishing —
+# the same pipeline the user site uses — works reliably.
+
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
   cancel-in-progress: true
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,23 +33,19 @@ jobs:
           GITHUB_PAGES: 'true'
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-          # Routes the utility functions to the self-hosted backend. Not secret
-          # (a public URL), so set it as a repository Variable, not a Secret.
-          # Leave the variable unset to keep using Supabase edge functions.
+          # Public URLs → repository Variables, not Secrets. Unset falls back to
+          # Supabase edge functions / disables cinepro playback respectively.
           VITE_FUNCTIONS_URL: ${{ vars.VITE_FUNCTIONS_URL }}
-          # Base URL of the self-hosted cinepro backend for Movies & TV playback
-          # (also a public URL → repository Variable). Unset disables playback.
           VITE_CINEPRO_URL: ${{ vars.VITE_CINEPRO_URL }}
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Publish to gh-pages branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          touch dist/.nojekyll   # skip Jekyll; serve the built files as-is
+          cd dist
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Deploy ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
