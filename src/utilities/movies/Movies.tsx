@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   ChevronLeft,
@@ -8,6 +9,7 @@ import {
   Clock,
   Film,
   Heart,
+  Loader2,
   Play,
   Settings,
   Star,
@@ -19,17 +21,18 @@ import { useUtilityConfig } from '../../hooks/useUtilityConfig'
 import { useT } from '../../i18n/LanguageContext'
 
 /**
- * Movies & TV. A browse-and-watch tool backed by two free services:
+ * Movies & TV. A browse-and-watch tool backed by two services:
  *
  *   • The Movie Database (TMDB) for metadata — popular / in-theatres-or-on-air
  *     / top-rated lists, genre categories, search and per-title details.
  *     TMDB allows browser CORS, so we call it directly with the user's own
  *     v3 API key (saved to their RLS-protected account config, never bundled).
- *   • VidFast (vidfast.pro) for playback — given a TMDB id it returns an embed
- *     player (movies by id, TV by id + season + episode), dropped into an
- *     <iframe>. No key required. These free providers monetize with redirect/
- *     popup ads and refuse to play inside a sandboxed iframe, so the embed runs
- *     unsandboxed — a browser ad blocker (e.g. uBlock Origin) is the mitigation.
+ *   • cinepro-core for playback — our self-hosted OMSS scraping/streaming
+ *     backend (the cinepro/ deployment in the toolbox-backend repo). Given a
+ *     TMDB id it returns real stream URLs + subtitles as JSON and proxies the
+ *     bytes itself, so we play them in a native <video> (HLS via hls.js) with
+ *     our own quality + subtitle controls — no third-party ad-iframe. Its base
+ *     URL comes from VITE_CINEPRO_URL; unset means playback is disabled.
  *
  * Favourites and watch history are part of the saved config, so they sync to
  * the user's account and persist across devices. Without an account the tool
@@ -39,11 +42,12 @@ import { useT } from '../../i18n/LanguageContext'
 const TMDB_BASE = 'https://api.themoviedb.org/3'
 const IMG_BASE = 'https://image.tmdb.org/t/p'
 
-// VidFast playback host. It mirrors itself across several domains; if one is
-// reset by an ISP/DNS block ("connection unexpectedly closed"), swap this for
-// another: vidfast.pro, vidfast.in, vidfast.io, vidfast.me, vidfast.net,
-// vidfast.pm, vidfast.xyz.
-const VIDFAST_DOMAIN = 'vidfast.net'
+// Base origin of the self-hosted cinepro-core backend (VITE_CINEPRO_URL, e.g.
+// https://cine.example.com — origin only, no /v1). Empty when unset, which
+// disables playback while browsing keeps working. Stream/subtitle URLs in
+// cinepro responses are proxy paths resolved against this origin.
+const CINEPRO_BASE =
+  (import.meta.env.VITE_CINEPRO_URL as string | undefined)?.replace(/\/+$/, '') || ''
 
 type MediaType = 'movie' | 'tv'
 type Feed = 'popular' | 'now_playing' | 'on_the_air' | 'top_rated'
@@ -101,6 +105,14 @@ const STR = {
     favourite: 'Favourite',
     // Player
     seasonEpisode: (s: number, e: number) => `Season ${s} · Episode ${e}`,
+    findingSources: 'Finding sources…',
+    noSources: 'No playable sources found for this title.',
+    playbackNotConfigured:
+      'Playback backend isn’t configured (VITE_CINEPRO_URL is unset).',
+    playbackError: 'This source failed to play — try another below.',
+    retry: 'Retry',
+    source: 'Source',
+    sourceN: (n: number) => `Source ${n}`,
     // Main
     loadingLibrary: 'Loading your library…',
     heading: 'Movies & TV',
@@ -111,7 +123,7 @@ const STR = {
     apiKeyPlaceholder: 'Paste your TMDB (v3) API key',
     getKeyAt: 'Get a free key at',
     apiKeyHelp:
-      '(use the “API Key”, not the read token). It’s saved to your account — only you can read it — and used straight from your browser. Playback is via VidFast and needs no key.',
+      '(use the “API Key”, not the read token). It’s saved to your account — only you can read it — and used straight from your browser. Playback runs through the self-hosted cinepro backend and needs no key.',
     keyIsSet: 'A key is set.',
     noKeyYetHelp: 'No key set yet — add one to start browsing.',
     movies: 'Movies',
@@ -170,6 +182,14 @@ const STR = {
     favourited: 'Favoriet',
     favourite: 'Favoriet maken',
     seasonEpisode: (s: number, e: number) => `Seizoen ${s} · Aflevering ${e}`,
+    findingSources: 'Bronnen zoeken…',
+    noSources: 'Geen afspeelbare bronnen gevonden voor deze titel.',
+    playbackNotConfigured:
+      'Afspeel-backend is niet geconfigureerd (VITE_CINEPRO_URL ontbreekt).',
+    playbackError: 'Deze bron kon niet afspelen — probeer hieronder een andere.',
+    retry: 'Opnieuw',
+    source: 'Bron',
+    sourceN: (n: number) => `Bron ${n}`,
     loadingLibrary: 'Je bibliotheek laden…',
     heading: 'Films & TV',
     intro:
@@ -179,7 +199,7 @@ const STR = {
     apiKeyPlaceholder: 'Plak je TMDB (v3) API-sleutel',
     getKeyAt: 'Haal een gratis sleutel op bij',
     apiKeyHelp:
-      '(gebruik de “API Key”, niet het read-token). Hij wordt in je account bewaard — alleen jij kunt hem lezen — en rechtstreeks vanuit je browser gebruikt. Afspelen verloopt via VidFast en vereist geen sleutel.',
+      '(gebruik de “API Key”, niet het read-token). Hij wordt in je account bewaard — alleen jij kunt hem lezen — en rechtstreeks vanuit je browser gebruikt. Afspelen verloopt via de zelf-gehoste cinepro-backend en vereist geen sleutel.',
     keyIsSet: 'Er is een sleutel ingesteld.',
     noKeyYetHelp: 'Nog geen sleutel ingesteld — voeg er een toe om te beginnen bladeren.',
     movies: 'Films',
@@ -648,21 +668,52 @@ function DetailCard({
   )
 }
 
-// Shape of the player's `MEDIA_DATA` payload, parsed defensively. The player may
-// post its whole store (keyed by TMDB id) or just the playing title's entry;
-// movies carry `progress` directly, episodes nest it under `show_progress`.
-interface MediaProgressNode {
-  watched?: number
-  duration?: number
+// --- cinepro playback ------------------------------------------------------
+// A cinepro (OMSS) `Source`: `url` is a proxy path (`/v1/proxy?data=…`) that
+// streams the bytes for us, so no upstream headers/CORS are our problem.
+interface CineSource {
+  url: string
+  type: 'hls' | 'dash' | 'http' | 'mp4' | 'mkv' | 'webm'
+  quality?: string
+  provider?: { id?: string; name?: string }
 }
-interface MediaProgressEntry {
-  progress?: MediaProgressNode
-  show_progress?: Record<string, { progress?: MediaProgressNode }>
+interface CineSubtitle {
+  url: string
+  label: string
+  format: 'vtt' | 'srt' | 'ass' | 'ssa'
 }
-type MediaProgressStore = MediaProgressEntry & Record<string, MediaProgressEntry>
+interface CineResponse {
+  sources?: CineSource[]
+  subtitles?: CineSubtitle[]
+}
+
+// Resolve a cinepro URL field against the backend origin. `url` fields are
+// usually root-relative proxy paths; absolute URLs are passed through.
+const cineUrl = (u: string) => (/^https?:\/\//i.test(u) ? u : `${CINEPRO_BASE}${u}`)
+
+// Pull a pixel height out of a quality string ("1080p" → 1080) for sorting.
+const qualityRank = (q?: string) => {
+  const m = /(\d{3,4})\s*p/i.exec(q ?? '')
+  return m ? Number(m[1]) : 0
+}
+
+// Rank sources best-first: HLS ahead of everything else (segmented, so each
+// response stays under the tunnel's 100 MB cap and it seeks cleanly), then by
+// resolution. A single-file mp4 would blow the tunnel cap, so it sinks.
+const sortSources = (sources: CineSource[]) =>
+  [...sources].sort((a, b) => {
+    const ah = a.type === 'hls' ? 1 : 0
+    const bh = b.type === 'hls' ? 1 : 0
+    return ah !== bh ? bh - ah : qualityRank(b.quality) - qualityRank(a.quality)
+  })
+
+type PlayerStatus = 'config' | 'loading' | 'ready' | 'empty' | 'error'
 
 // Full-screen player overlay — the season/episode are chosen on the card.
-// Resumes at `resumeSec` and reports playback progress back via `onProgress`.
+// Fetches stream sources from cinepro, plays the chosen one in a native
+// <video> (HLS via hls.js), resumes at `resumeSec`, and reports playback
+// progress back via `onProgress` (persisted once, on close, to keep saves
+// sparse). A quality/source selector lets the viewer switch if one fails.
 function Player({
   title,
   season,
@@ -682,69 +733,121 @@ function Player({
   const isTv = title.mediaType === 'tv'
   useOverlayChrome(onClose)
 
-  // Keep the latest callback in a ref so the message listener can stay
-  // subscribed once for the player's lifetime without going stale.
+  const [status, setStatus] = useState<PlayerStatus>(CINEPRO_BASE ? 'loading' : 'config')
+  const [sources, setSources] = useState<CineSource[]>([])
+  const [subtitles, setSubtitles] = useState<CineSubtitle[]>([])
+  const [selected, setSelected] = useState(0)
+  const [playError, setPlayError] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
+
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const hlsRef = useRef<{ destroy(): void } | null>(null)
+
+  // Persist-on-close bookkeeping (mirrors the old iframe behaviour): track the
+  // latest position each tick, seed the resume point, and write it once when
+  // the player unmounts. `positionRef` also survives source switches so
+  // changing quality keeps your place.
+  const latest = useRef<{ fraction: number; seconds: number } | null>(null)
+  const positionRef = useRef(resumeSec)
   const onProgressRef = useRef(onProgress)
   useEffect(() => {
     onProgressRef.current = onProgress
   })
+  useEffect(
+    () => () => {
+      if (latest.current) onProgressRef.current(latest.current.fraction, latest.current.seconds)
+    },
+    []
+  )
 
-  // The embed posts playback progress to the parent as it plays. We track the
-  // latest position each tick but only persist it once, on close, to keep saves
-  // (and DB writes) sparse. Parsed defensively since the exact shape isn't
-  // contractual and varies by provider — we accept either form:
-  //   • PLAYER_EVENT: a per-tick event carrying `currentTime` + `duration`.
-  //     Some providers post this as a JSON *string*, so we parse strings first.
-  //   • MEDIA_DATA: a progress store keyed by TMDB id (movies carry `progress`
-  //     directly; episodes nest it under `show_progress` by `s{n}e{n}`).
-  const latest = useRef<{ fraction: number; seconds: number } | null>(null)
+  // Fetch stream sources for this exact title/episode from cinepro.
   useEffect(() => {
-    function onMessage(e: MessageEvent) {
-      let d = e.data as Record<string, unknown> | string | null
-      if (typeof d === 'string') {
-        try {
-          d = JSON.parse(d) as Record<string, unknown>
-        } catch {
+    if (!CINEPRO_BASE) return // status was initialised to 'config'
+    const path = isTv
+      ? `/v1/tv/${title.id}/seasons/${season}/episodes/${episode}`
+      : `/v1/movies/${title.id}`
+    const ctrl = new AbortController()
+    // Genuine data-fetch effect: show the loading state again whenever the
+    // title/episode (or a retry) changes the request.
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setStatus('loading')
+    setPlayError(false)
+    /* eslint-enable react-hooks/set-state-in-effect */
+    fetch(`${CINEPRO_BASE}${path}`, { signal: ctrl.signal })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`cinepro ${r.status}`)
+        return (await r.json()) as CineResponse
+      })
+      .then((data) => {
+        const srcs = sortSources(data.sources ?? [])
+        // Only VTT subtitles render as native <track>s; srt/ass aren't supported.
+        setSubtitles((data.subtitles ?? []).filter((s) => s.format === 'vtt'))
+        setSources(srcs)
+        setSelected(0)
+        setStatus(srcs.length ? 'ready' : 'empty')
+      })
+      .catch(() => {
+        if (!ctrl.signal.aborted) setStatus('error')
+      })
+    return () => ctrl.abort()
+  }, [title.id, isTv, season, episode, reloadKey])
+
+  // Attach the selected source to the <video>: hls.js for HLS (except where the
+  // browser plays it natively, e.g. Safari), a plain src otherwise.
+  useEffect(() => {
+    const video = videoRef.current
+    const source = sources[selected]
+    if (status !== 'ready' || !video || !source) return
+    setPlayError(false)
+    let cancelled = false
+    const url = cineUrl(source.url)
+    const nativeHls = !!video.canPlayType('application/vnd.apple.mpegurl')
+
+    async function load(el: HTMLVideoElement) {
+      if (source.type === 'hls' && !nativeHls) {
+        const { default: Hls } = await import('hls.js')
+        if (cancelled) return
+        if (Hls.isSupported()) {
+          const hls = new Hls({ enableWorker: true })
+          hlsRef.current = hls
+          hls.on(Hls.Events.ERROR, (_evt, data) => {
+            if (data.fatal) setPlayError(true)
+          })
+          hls.loadSource(url)
+          hls.attachMedia(el)
           return
         }
       }
-      if (!d || typeof d !== 'object') return
-      const type = d.type ?? d.event
-      let seconds: number
-      let duration: number
-      if (type === 'MEDIA_DATA') {
-        const raw = (d.data ?? {}) as MediaProgressStore
-        const entry = raw.progress || raw.show_progress ? raw : raw[String(title.id)]
-        const node = isTv
-          ? entry?.show_progress?.[`s${season}e${episode}`]?.progress
-          : entry?.progress
-        seconds = Number(node?.watched)
-        duration = Number(node?.duration)
-      } else if (type === 'PLAYER_EVENT') {
-        const inner = (d.data as Record<string, unknown>) ?? d
-        seconds = Number(inner.currentTime ?? inner.player_progress ?? inner.progress)
-        duration = Number(inner.duration ?? inner.player_duration)
-      } else return
-      if (!isFinite(seconds) || !isFinite(duration) || duration <= 0) return
-      latest.current = { fraction: Math.min(1, Math.max(0, seconds / duration)), seconds }
+      el.src = url
+      el.load()
     }
-    window.addEventListener('message', onMessage)
-    return () => {
-      window.removeEventListener('message', onMessage)
-      // Persist wherever the viewer got to when the player closes.
-      if (latest.current) onProgressRef.current(latest.current.fraction, latest.current.seconds)
-    }
-  }, [title.id, isTv, season, episode])
+    void load(video)
 
-  const base = isTv
-    ? `https://${VIDFAST_DOMAIN}/tv/${title.id}/${season}/${episode}`
-    : `https://${VIDFAST_DOMAIN}/movie/${title.id}`
-  // `theme` matches our violet accent; `autoPlay` starts playback immediately
-  // (the click on Play is the user gesture that permits it); `hideServer` drops
-  // the server-selector button; `startAt` (seconds) resumes where we left off.
-  const params = new URLSearchParams({ theme: '8b5cf6', autoPlay: 'true', hideServer: 'true' })
-  if (resumeSec > 0) params.set('startAt', String(Math.floor(resumeSec)))
-  const src = `${base}?${params.toString()}`
+    return () => {
+      cancelled = true
+      if (hlsRef.current) {
+        hlsRef.current.destroy()
+        hlsRef.current = null
+      }
+      video.removeAttribute('src')
+      video.load()
+    }
+  }, [status, sources, selected])
+
+  function handleTimeUpdate(e: SyntheticEvent<HTMLVideoElement>) {
+    const v = e.currentTarget
+    const seconds = v.currentTime
+    const duration = v.duration
+    if (!isFinite(seconds) || !isFinite(duration) || duration <= 0) return
+    positionRef.current = seconds
+    latest.current = { fraction: Math.min(1, Math.max(0, seconds / duration)), seconds }
+  }
+
+  function handleLoadedMetadata(e: SyntheticEvent<HTMLVideoElement>) {
+    const v = e.currentTarget
+    const pos = positionRef.current
+    if (pos > 0 && pos < (v.duration || Infinity)) v.currentTime = pos
+  }
 
   return createPortal(
     <div
@@ -762,26 +865,99 @@ function Player({
               {isTv ? t.seasonEpisode(season, episode) : year(title.date)}
             </p>
           </div>
-          <button
-            onClick={onClose}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
-          >
-            <X className="size-4" /> {t.close}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {/* Source/quality picker — only when there's a choice to make. */}
+            {status === 'ready' && sources.length > 1 && (
+              <select
+                value={selected}
+                onChange={(e) => setSelected(Number(e.target.value))}
+                aria-label={t.source}
+                className="glass max-w-[11rem] rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:border-indigo-400/60 focus:outline-none"
+              >
+                {sources.map((s, i) => (
+                  <option key={i} value={i} className="bg-slate-900">
+                    {[
+                      s.quality && s.quality !== 'unknown' ? s.quality : null,
+                      s.type?.toUpperCase(),
+                      s.provider?.name,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ') || t.sourceN(i + 1)}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              onClick={onClose}
+              className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+            >
+              <X className="size-4" /> {t.close}
+            </button>
+          </div>
         </div>
         {/* Cap the player to the viewport height so its controls aren't clipped
-            on shorter screens; the modal's header takes the rest. The iframe
-            fills this box (the player letterboxes if the ratio differs). */}
-        <div className="aspect-video max-h-[calc(100dvh-6rem)] w-full bg-black">
-          <iframe
-            key={src}
-            src={src}
-            title={title.title}
-            className="size-full"
-            allowFullScreen
-            allow="autoplay; fullscreen; encrypted-media"
-            referrerPolicy="origin"
-          />
+            on shorter screens; the modal's header takes the rest. */}
+        <div className="relative aspect-video max-h-[calc(100dvh-6rem)] w-full bg-black">
+          {status === 'ready' ? (
+            <>
+              <video
+                ref={videoRef}
+                className="size-full"
+                controls
+                autoPlay
+                playsInline
+                crossOrigin="anonymous"
+                onTimeUpdate={handleTimeUpdate}
+                onLoadedMetadata={handleLoadedMetadata}
+                onError={() => setPlayError(true)}
+              >
+                {subtitles.map((s, i) => (
+                  <track
+                    key={i}
+                    kind="subtitles"
+                    src={cineUrl(s.url)}
+                    label={s.label}
+                    default={i === 0}
+                  />
+                ))}
+              </video>
+              {playError && (
+                <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center p-3">
+                  <span className="pointer-events-auto flex items-center gap-2 rounded-lg bg-rose-500/90 px-3 py-1.5 text-xs font-medium text-white shadow-lg">
+                    <AlertTriangle className="size-4" /> {t.playbackError}
+                  </span>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="flex size-full flex-col items-center justify-center gap-3 px-6 text-center text-slate-400">
+              {status === 'loading' ? (
+                <>
+                  <Loader2 className="size-7 animate-spin text-indigo-400" />
+                  <p className="text-sm">{t.findingSources}</p>
+                </>
+              ) : (
+                <>
+                  <AlertTriangle className="size-7 text-slate-500" />
+                  <p className="max-w-sm text-sm">
+                    {status === 'config'
+                      ? t.playbackNotConfigured
+                      : status === 'empty'
+                        ? t.noSources
+                        : t.couldNotLoad}
+                  </p>
+                  {(status === 'empty' || status === 'error') && (
+                    <button
+                      onClick={() => setReloadKey((k) => k + 1)}
+                      className="mt-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-slate-200 transition-colors hover:bg-white/10 hover:text-white"
+                    >
+                      {t.retry}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>,
