@@ -33,6 +33,9 @@ jobs:
           # (a public URL), so set it as a repository Variable, not a Secret.
           # Leave the variable unset to keep using Supabase edge functions.
           VITE_FUNCTIONS_URL: ${{ vars.VITE_FUNCTIONS_URL }}
+          # Base URL of the self-hosted cinepro backend for Movies & TV playback
+          # (also a public URL → repository Variable). Unset disables playback.
+          VITE_CINEPRO_URL: ${{ vars.VITE_CINEPRO_URL }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
