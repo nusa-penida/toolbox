@@ -12,6 +12,7 @@ import {
   mealPlannerIcon,
   memeStudioIcon,
   videoEditorIcon,
+  boardGameIcon,
 } from './icons'
 
 // Register every utility here. Order determines sidebar order.
@@ -126,6 +127,17 @@ registerUtility({
   availableWithoutAccount: true,
   component: lazy(() =>
     import('./video-editor/VideoEditor').then((m) => ({ default: m.VideoEditor }))
+  ),
+})
+
+registerUtility({
+  id: 'board-game-scores',
+  name: 'Board Game Scores',
+  description: 'Keep score for any board game — add players and rounds, live totals and a crowned leader. Saved to your account.',
+  icon: boardGameIcon,
+  availableWithoutAccount: false,
+  component: lazy(() =>
+    import('./board-game-scores/BoardGameScores').then((m) => ({ default: m.BoardGameScores }))
   ),
 })
 

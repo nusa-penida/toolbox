@@ -21,6 +21,7 @@ import {
   UtensilsCrossed,
   Laugh,
   Film,
+  Dices,
 } from 'lucide-react'
 
 export const textCaseIcon = <CaseSensitive className="size-5" />
@@ -34,3 +35,4 @@ export const stockIcon = <TrendingUp className="size-5" />
 export const mealPlannerIcon = <UtensilsCrossed className="size-5" />
 export const memeStudioIcon = <Laugh className="size-5" />
 export const videoEditorIcon = <Film className="size-5" />
+export const boardGameIcon = <Dices className="size-5" />
