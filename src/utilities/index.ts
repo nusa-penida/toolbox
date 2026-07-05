@@ -13,6 +13,7 @@ import {
   memeStudioIcon,
   videoEditorIcon,
   boardGameIcon,
+  solarRoofIcon,
 } from './icons'
 
 // Register every utility here. Order determines sidebar order.
@@ -37,6 +38,18 @@ registerUtility({
   availableWithoutAccount: true,
   component: lazy(() =>
     import('./route-optimizer/RouteOptimizer').then((m) => ({ default: m.RouteOptimizer }))
+  ),
+})
+
+registerUtility({
+  id: 'solar-roof',
+  name: 'Solar Roof Planner',
+  description:
+    'Trace a roof on the satellite map, set each face’s slope and direction, and find the best surface for solar panels by yearly sun.',
+  icon: solarRoofIcon,
+  availableWithoutAccount: true,
+  component: lazy(() =>
+    import('./solar-roof/SolarRoof').then((m) => ({ default: m.SolarRoof }))
   ),
 })
 
