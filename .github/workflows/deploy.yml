@@ -30,6 +30,9 @@ jobs:
       - run: npm ci
       - run: npm run build
         env:
+          # Project site lives at IsaacSauer.github.io/toolbox/, so assets must
+          # be based under /toolbox/ (see vite.config.ts).
+          GITHUB_PAGES: 'true'
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           # Public URLs → repository Variables, not Secrets. Unset falls back to
