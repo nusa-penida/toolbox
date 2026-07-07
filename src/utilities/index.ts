@@ -1,19 +1,19 @@
 import { lazy } from 'react'
 import { registerUtility } from './registry'
 import {
-  textCaseIcon,
-  routeIcon,
-  downloadIcon,
+  // textCaseIcon,
+  // routeIcon,
+  // downloadIcon,
   qrCodeIcon,
   clockIcon,
-  soccerIcon,
-  stockIcon,
-  moviesIcon,
+  // soccerIcon,
+  // stockIcon,
+  // moviesIcon,
   mealPlannerIcon,
   memeStudioIcon,
-  videoEditorIcon,
-  boardGameIcon,
-  solarRoofIcon,
+  // videoEditorIcon,
+  // boardGameIcon,
+  // solarRoofIcon,
 } from './icons'
 
 // Register every utility here. Order determines sidebar order.
